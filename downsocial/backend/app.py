@@ -64,7 +64,7 @@ CORS(app, resources={r"/api/*": {
         "https://downsocial.net",
         "https://www.downsocial.net",
         "https://video-downloader-mehran7.vercel.app",
-        "https://facebook-video-downloader-wine.vercel.app"
+        "https://video-downloader-lemon-three.vercel.app"
     ]
 }})
 
