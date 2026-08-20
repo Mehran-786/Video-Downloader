@@ -260,6 +260,17 @@ def resolve_short_url(url):
                     if not is_safe_web_url(next_url):
                         logging.warning(f"[UNSHORTENER BLOCKED] Suspicious redirect target: {next_url}")
                         break
+                    # Detect Instagram/Threads login redirect — return original URL
+                    # so yt-dlp can attempt extraction with its own cookies/session
+                    parsed_next = urlparse(next_url)
+                    if parsed_next.path.startswith('/accounts/login') or \
+                       parsed_next.path.startswith('/login') or \
+                       'accounts/login' in next_url or \
+                       'login' in parsed_next.path.lower() and any(
+                           d in parsed_next.netloc for d in ['instagram.com', 'threads.com', 'threads.net']
+                       ):
+                        logging.warning(f"[UNSHORTENER] Login redirect detected, returning original URL: {url}")
+                        return url
                     current_url = next_url
                 else:
                     break
@@ -320,8 +331,11 @@ def get_platform_request_headers(url, extra_headers=None):
 
 def get_ydl_options(url=None):
     is_youtube = bool(url) and ('youtube.com' in url.lower() or 'youtu.be' in url.lower())
+    is_instagram = bool(url) and ('instagram.com' in url.lower() or 'instagr.am' in url.lower())
+    is_threads = bool(url) and ('threads.com' in url.lower() or 'threads.net' in url.lower())
     cookies_file = None
 
+    # --- YouTube cookies ---
     if is_youtube:
         possible_cookie_paths = [
             '/etc/secrets/cookies.txt',
@@ -411,6 +425,33 @@ def get_ydl_options(url=None):
         logging.info(f"[COOKIES] Auto-loaded cookies for YouTube from: {cookies_file}")
     elif is_youtube:
         logging.warning("[COOKIES] No cookies.txt found — YouTube requests may hit bot detection on datacenter IPs")
+
+    # --- Instagram / Threads cookies ---
+    # Instagram and Threads require a logged-in session on datacenter IPs to avoid 429.
+    # Add a secret file named 'insta_cookies' on Render Environment → Secret Files.
+    if is_instagram or is_threads:
+        insta_cookie_paths = [
+            '/etc/secrets/insta_cookies.txt',
+            '/etc/secrets/insta_cookies',
+            '/etc/secrets/insta_cookies_1.txt',
+            '/etc/secrets/insta_cookies_1',
+            os.path.join(os.path.dirname(__file__), 'insta_cookies.txt'),
+            os.path.join(os.path.dirname(__file__), 'insta_cookies'),
+        ]
+        insta_cookie_file = next((p for p in insta_cookie_paths if os.path.isfile(p)), None)
+        if insta_cookie_file:
+            try:
+                import tempfile
+                temp_insta = os.path.join(tempfile.gettempdir(), 'insta_cookies.txt')
+                shutil.copyfile(insta_cookie_file, temp_insta)
+                opts['cookiefile'] = temp_insta
+                logging.info(f"[COOKIES] Auto-loaded cookies for Instagram/Threads from: {insta_cookie_file}")
+            except Exception as e:
+                opts['cookiefile'] = insta_cookie_file
+                logging.warning(f"[COOKIES] Using insta cookies directly: {e}")
+        else:
+            logging.warning("[COOKIES] No insta_cookies file found — Instagram/Threads may hit 429 on datacenter IPs")
+
     return opts
 
 # ==========================================
