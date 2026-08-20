@@ -461,6 +461,67 @@ def get_ydl_options(url=None):
 
     return opts
 
+def extract_threads_direct(url, cookie_file=None):
+    """
+    Direct extraction for Threads posts (supports both threads.net and threads.com).
+    Uses session cookies from insta_cookies to bypass rate limits and extract direct MP4 CDN URLs.
+    """
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Sec-Fetch-Site': 'none',
+        }
+        s = requests.Session()
+        if cookie_file and os.path.exists(cookie_file):
+            cookies = {}
+            for line in open(cookie_file, 'r', encoding='utf-8', errors='ignore').read().splitlines():
+                if line.startswith('.') or line.startswith('http'):
+                    parts = line.split('\t')
+                    if len(parts) >= 7:
+                        cookies[parts[5]] = parts[6]
+            s.cookies.update(cookies)
+
+        r = s.get(url, headers=headers, allow_redirects=True, timeout=12)
+        if r.status_code != 200:
+            return None
+
+        clean_text = r.text.replace(r'\/', '/').replace(r'\u0026', '&').replace('&amp;', '&')
+        mp4s = re.findall(r'https://[^\s"\'<>\\]+?\.mp4[^\s"\'<>\\]*', clean_text)
+        if not mp4s:
+            return None
+
+        unique_mp4s = list(dict.fromkeys(mp4s))
+        title_m = re.findall(r'<meta property="og:title" content="([^"]+)"', r.text)
+        desc_m = re.findall(r'<meta property="og:description" content="([^"]+)"', r.text)
+
+        import html
+        title = ""
+        if desc_m:
+            title = html.unescape(desc_m[0])
+        elif title_m:
+            title = html.unescape(title_m[0])
+        else:
+            title = "Threads Video"
+
+        video_high = unique_mp4s[0]
+        video_normal = unique_mp4s[-1] if len(unique_mp4s) > 1 else video_high
+
+        return {
+            "success": True,
+            "title": title,
+            "video_high": video_high,
+            "video_normal": video_normal,
+            "audio_high": video_high,
+            "audio_normal": video_normal,
+            "duration": 0,
+            "type": "video",
+            "platform": "threads"
+        }
+    except Exception as e:
+        logging.warning(f"[THREADS DIRECT ERROR] {e}")
+        return None
+
 # ==========================================
 # 🎯 ROUTE 1: UNIVERSAL EXTRACTION ENGINE 🎯
 # ==========================================
@@ -484,6 +545,16 @@ def download_video():
         return jsonify(cached_data)
 
     ydl_opts = get_ydl_options(resolved_url)
+
+    # Fast direct extraction for Threads (bypasses yt-dlp's lack of threads.com support)
+    is_threads = bool(resolved_url) and ('threads.net' in resolved_url.lower() or 'threads.com' in resolved_url.lower())
+    if is_threads:
+        cookie_file = ydl_opts.get('cookiefile')
+        threads_res = extract_threads_direct(resolved_url, cookie_file)
+        if threads_res:
+            logging.info(f"[THREADS SUCCESS] Extracted directly: {threads_res.get('title')[:30]}")
+            video_cache.set(resolved_url, threads_res)
+            return jsonify(threads_res)
 
     try:
         info = None
