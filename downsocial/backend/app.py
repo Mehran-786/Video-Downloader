@@ -24,17 +24,19 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import yt_dlp
 import requests
 
-# Start Command's "export PATH=..." doesn't reliably reach the gunicorn
-# worker process on Render — set it directly in Python's own environ
-# instead, which any subprocess this app spawns (including yt-dlp's
-# deno calls) will correctly inherit.
-_deno_candidates = [
-    os.path.expanduser('~/.deno/bin'),
-    '/opt/render/.deno/bin',
+# Ensure Deno binary is on PATH so gunicorn worker subprocesses inherit it.
+# Check the actual binary file (not just the directory) to be certain it exists.
+_deno_bin_candidates = [
+    os.path.expanduser('~/.deno/bin/deno'),
+    '/opt/render/.deno/bin/deno',
+    '/root/.deno/bin/deno',
 ]
-for _deno_dir in _deno_candidates:
-    if os.path.isdir(_deno_dir) and _deno_dir not in os.environ.get('PATH', ''):
-        os.environ['PATH'] = _deno_dir + os.pathsep + os.environ.get('PATH', '')
+for _deno_bin in _deno_bin_candidates:
+    if os.path.isfile(_deno_bin):
+        _deno_dir = os.path.dirname(_deno_bin)
+        if _deno_dir not in os.environ.get('PATH', ''):
+            os.environ['PATH'] = _deno_dir + os.pathsep + os.environ.get('PATH', '')
+        break
 
 def get_ffmpeg_path():
     """Locates ffmpeg executable from PATH or bundled imageio-ffmpeg."""
@@ -371,7 +373,10 @@ def get_ydl_options(url=None):
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android'],
+                # ios and mweb clients bypass YouTube's SABR-only streaming
+                # experiment that causes 'Requested format is not available'
+                # on the android client. ios is tried first as it's most reliable.
+                'player_client': ['ios', 'mweb', 'android'],
             },
             'tiktok': {
                 'app_version': ['34.1.2'],
