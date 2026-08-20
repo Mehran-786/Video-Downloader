@@ -232,6 +232,10 @@ def resolve_short_url(url):
     if not url or not is_safe_web_url(url):
         return url
 
+    # Normalize threads.com to threads.net so yt-dlp recognizes the domain
+    if 'threads.com' in url.lower():
+        url = re.sub(r'threads\.com', 'threads.net', url, flags=re.IGNORECASE)
+
     short_patterns = [
         "/share/", "fb.watch", "fb.gg", "facebook.com/share",
         "vm.tiktok.com", "vt.tiktok.com", "tiktok.com/t/",
@@ -246,7 +250,7 @@ def resolve_short_url(url):
         try:
             logging.info(f"[UNSHORTENER] Resolving shortened URL: {url}")
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
             }
             
             current_url = url
@@ -274,6 +278,9 @@ def resolve_short_url(url):
                     current_url = next_url
                 else:
                     break
+            
+            if 'threads.com' in current_url.lower():
+                current_url = re.sub(r'threads\.com', 'threads.net', current_url, flags=re.IGNORECASE)
                     
             logging.info(f"[UNSHORTENER] Successfully un-shortened: {url} -> {current_url}")
             return current_url
@@ -479,23 +486,44 @@ def download_video():
     ydl_opts = get_ydl_options(resolved_url)
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logging.info(f"[EXTRACTION START] Fetching metadata for: {resolved_url}")
-            info = ydl.extract_info(resolved_url, download=False)
-            if not info:
-                raise Exception("Empty metadata received from yt-dlp")
+        info = None
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logging.info(f"[EXTRACTION START] Fetching metadata for: {resolved_url}")
+                info = ydl.extract_info(resolved_url, download=False)
+                if not info:
+                    raise Exception("Empty metadata received from yt-dlp")
 
-            # Sync TikTok session cookies into http_session for CDN streaming.
-            # TikTok CDN requires the session cookies obtained during JS challenge
-            # solving — without them, /api/direct proxy gets HTTP 403.
-            is_tiktok_url = 'tiktok.com' in resolved_url.lower() or 'tiktok.com' in url.lower()
-            if is_tiktok_url and hasattr(ydl, 'cookiejar') and ydl.cookiejar:
-                for c in ydl.cookiejar:
-                    try:
-                        http_session.cookies.set(c.name, c.value, domain='.tiktok.com', path='/')
-                        http_session.cookies.set_cookie(c)
-                    except Exception:
-                        pass
+                # Sync TikTok session cookies into http_session for CDN streaming.
+                is_tiktok_url = 'tiktok.com' in resolved_url.lower() or 'tiktok.com' in url.lower()
+                if is_tiktok_url and hasattr(ydl, 'cookiejar') and ydl.cookiejar:
+                    for c in ydl.cookiejar:
+                        try:
+                            http_session.cookies.set(c.name, c.value, domain='.tiktok.com', path='/')
+                            http_session.cookies.set_cookie(c)
+                        except Exception:
+                            pass
+        except Exception as first_extract_err:
+            # Fallback for Threads: map the post shortcode to Instagram /p/ format
+            # so yt-dlp's Instagram extractor can process it with insta_cookies
+            is_threads = 'threads.net' in resolved_url.lower() or 'threads.com' in resolved_url.lower()
+            post_m = re.search(r'/(?:post|share|t)/([A-Za-z0-9_\-]+)', resolved_url)
+            if is_threads and post_m:
+                post_id = post_m.group(1)
+                ig_fallback_url = f"https://www.instagram.com/p/{post_id}/"
+                logging.info(f"[THREADS FALLBACK] Trying Instagram mapping for Threads: {ig_fallback_url}")
+                try:
+                    ig_opts = get_ydl_options(ig_fallback_url)
+                    with yt_dlp.YoutubeDL(ig_opts) as fallback_ydl:
+                        info = fallback_ydl.extract_info(ig_fallback_url, download=False)
+                except Exception as fb_err:
+                    logging.warning(f"[THREADS FALLBACK FAILED] {fb_err}")
+                    raise first_extract_err
+            else:
+                raise first_extract_err
+        
+        if not info:
+            raise Exception("Empty metadata received from yt-dlp")
 
         media_type = "image" if info.get('_type') == 'url_transparent' and not info.get('formats') else "video"
         
