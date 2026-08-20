@@ -24,6 +24,18 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import yt_dlp
 import requests
 
+# Start Command's "export PATH=..." doesn't reliably reach the gunicorn
+# worker process on Render — set it directly in Python's own environ
+# instead, which any subprocess this app spawns (including yt-dlp's
+# deno calls) will correctly inherit.
+_deno_candidates = [
+    os.path.expanduser('~/.deno/bin'),
+    '/opt/render/.deno/bin',
+]
+for _deno_dir in _deno_candidates:
+    if os.path.isdir(_deno_dir) and _deno_dir not in os.environ.get('PATH', ''):
+        os.environ['PATH'] = _deno_dir + os.pathsep + os.environ.get('PATH', '')
+
 def get_ffmpeg_path():
     """Locates ffmpeg executable from PATH or bundled imageio-ffmpeg."""
     path = shutil.which('ffmpeg')
@@ -47,7 +59,10 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 # ==========================================
 CORS(app, resources={r"/api/*": {
     "origins": [
-        "https://video-downloader-mehran7.vercel.app"
+        "https://downsocial.net",
+        "https://www.downsocial.net",
+        "https://video-downloader-mehran7.vercel.app",
+        "https://facebook-video-downloader-wine.vercel.app"
     ]
 }})
 
