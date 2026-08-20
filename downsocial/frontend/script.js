@@ -494,11 +494,61 @@ class DownloadManager {
         if (this.card) this.card.style.display = "block";
 
         const isImg = data.type === "image";
-        if (this.videoPreview) this.videoPreview.style.display = isImg ? "none" : "block";
-        if (this.imagePreview) this.imagePreview.style.display = isImg ? "block" : "none";
+        // TikTok CDN URLs have CORS restrictions — they cannot be played
+        // directly in an HTML5 <video> tag from a different origin.
+        const inputUrl = (this.input && this.input._lastUrl) || '';
+        const isTikTok = data.platform === 'tiktok' ||
+            (data.video_high && data.video_high.includes('tiktok')) ||
+            (data.video_high && data.video_high.includes('tiktokv'));
 
-        if (isImg && this.imagePreview) this.imagePreview.src = data.video_high;
-        if (!isImg && this.videoPreview) this.videoPreview.src = data.video_normal || data.video_high;
+        if (this.videoPreview) this.videoPreview.style.display = "none";
+        if (this.imagePreview) this.imagePreview.style.display = "none";
+
+        // Remove any old TikTok notice
+        const oldNotice = this.card && this.card.querySelector('.tiktok-preview-notice');
+        if (oldNotice) oldNotice.remove();
+
+        if (isImg && this.imagePreview) {
+            this.imagePreview.style.display = "block";
+            this.imagePreview.src = data.video_high;
+        } else if (isTikTok) {
+            // Show a clean notice instead of the broken black video player
+            const notice = document.createElement('div');
+            notice.className = 'tiktok-preview-notice';
+            notice.style.cssText = `
+                display:flex; flex-direction:column; align-items:center; justify-content:center;
+                gap:10px; padding:24px 16px; border-radius:12px;
+                background:linear-gradient(135deg,#010101 0%,#1a1a1a 100%);
+                border:1px solid rgba(255,255,255,0.08);
+                text-align:center; margin-bottom:12px;
+            `;
+            notice.innerHTML = `
+                <img src="https://www.tiktok.com/favicon.ico" width="32" height="32"
+                     style="border-radius:8px;" onerror="this.style.display='none'">
+                <div style="font-size:1rem;font-weight:600;color:#fff;">
+                    📲 TikTok Video Ready!
+                </div>
+                <div style="font-size:0.82rem;color:rgba(255,255,255,0.55);max-width:240px;line-height:1.5;">
+                    Preview is not available for TikTok.<br>
+                    Click <strong style="color:#fe2c55;">Video (HD)</strong> or <strong style="color:#fe2c55;">Video (Normal)</strong> below to download and watch.
+                </div>
+            `;
+            // Insert before the download buttons row
+            const btnsRow = this.card.querySelector('.download-btns') ||
+                            this.card.querySelector('.btn-row') ||
+                            this.card.querySelector('#btnVidHigh')?.parentElement;
+            if (btnsRow) {
+                this.card.insertBefore(notice, btnsRow);
+            } else {
+                this.card.prepend(notice);
+            }
+        } else {
+            // Normal preview for YouTube, Facebook, Instagram, etc.
+            if (this.videoPreview) {
+                this.videoPreview.style.display = "block";
+                this.videoPreview.src = data.video_normal || data.video_high;
+            }
+        }
 
         this.configureDownloadLinks(data, isImg, transMgr);
         this.showStatus(transMgr.getFlatTrans('successMsg', "✅ Ready!"), "#4ade80");
