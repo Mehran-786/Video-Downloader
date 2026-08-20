@@ -357,6 +357,10 @@ def get_ydl_options(url=None):
         'extractor_args': {
             'youtube': {
                 'player_client': ['android'],
+            },
+            'tiktok': {
+                'app_version': ['34.1.2'],
+                'manifest_app_version': ['34.1.2']
             }
         },
         'http_headers': {
@@ -369,10 +373,16 @@ def get_ydl_options(url=None):
 
     # Enable JS runtimes for YouTube signature / n-challenge solving (Deno on Render, Node locally)
     js_runtimes = {}
-    if shutil.which('deno'):
+    deno_path = shutil.which('deno')
+    node_path = shutil.which('node')
+    if deno_path:
         js_runtimes['deno'] = {}
-    elif shutil.which('node'):
+        logging.info(f"[JS_RUNTIME] Deno found at: {deno_path}")
+    elif node_path:
         js_runtimes['node'] = {}
+        logging.info(f"[JS_RUNTIME] Node found at: {node_path}")
+    else:
+        logging.warning("[JS_RUNTIME] No JS runtime found on PATH — YouTube n-challenge solving unavailable")
     if js_runtimes:
         opts['js_runtimes'] = js_runtimes
 
@@ -408,42 +418,11 @@ def download_video():
     ydl_opts = get_ydl_options(resolved_url)
 
     try:
-        info = None
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                logging.info(f"[EXTRACTION START] Fetching metadata for: {resolved_url}")
-                info = ydl.extract_info(resolved_url, download=False)
-                
-                if not info:
-                    raise Exception("Empty metadata received from yt-dlp")
-
-                # Update session cookie jar with cookies obtained during challenge solving (critical for TikTok CDN streaming)
-                if hasattr(ydl, 'cookiejar') and ydl.cookiejar:
-                    for c in ydl.cookiejar:
-                        try:
-                            http_session.cookies.set(c.name, c.value, domain='.tiktok.com', path='/')
-                            http_session.cookies.set_cookie(c)
-                        except Exception:
-                            pass
-        except Exception as first_err:
-            # If request with cookies failed (e.g. expired cookies.txt), auto-retry without cookiefile
-            if 'cookiefile' in ydl_opts:
-                logging.warning(f"[EXTRACTION RETRY] Attempt with cookiefile failed ({first_err}). Retrying clean...")
-                clean_opts = dict(ydl_opts)
-                clean_opts.pop('cookiefile', None)
-                with yt_dlp.YoutubeDL(clean_opts) as clean_ydl:
-                    info = clean_ydl.extract_info(resolved_url, download=False)
-                    if not info:
-                        raise Exception("Empty metadata received from yt-dlp")
-                    if hasattr(clean_ydl, 'cookiejar') and clean_ydl.cookiejar:
-                        for c in clean_ydl.cookiejar:
-                            try:
-                                http_session.cookies.set(c.name, c.value, domain='.tiktok.com', path='/')
-                                http_session.cookies.set_cookie(c)
-                            except Exception:
-                                pass
-            else:
-                raise first_err
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            logging.info(f"[EXTRACTION START] Fetching metadata for: {resolved_url}")
+            info = ydl.extract_info(resolved_url, download=False)
+            if not info:
+                raise Exception("Empty metadata received from yt-dlp")
 
         media_type = "image" if info.get('_type') == 'url_transparent' and not info.get('formats') else "video"
         
