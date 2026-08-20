@@ -444,6 +444,18 @@ def download_video():
             if not info:
                 raise Exception("Empty metadata received from yt-dlp")
 
+            # Sync TikTok session cookies into http_session for CDN streaming.
+            # TikTok CDN requires the session cookies obtained during JS challenge
+            # solving — without them, /api/direct proxy gets HTTP 403.
+            is_tiktok_url = 'tiktok.com' in resolved_url.lower() or 'tiktok.com' in url.lower()
+            if is_tiktok_url and hasattr(ydl, 'cookiejar') and ydl.cookiejar:
+                for c in ydl.cookiejar:
+                    try:
+                        http_session.cookies.set(c.name, c.value, domain='.tiktok.com', path='/')
+                        http_session.cookies.set_cookie(c)
+                    except Exception:
+                        pass
+
         media_type = "image" if info.get('_type') == 'url_transparent' and not info.get('formats') else "video"
         
         video_high = None
